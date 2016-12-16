@@ -1,33 +1,15 @@
 import requests
 from json.decoder import JSONDecoder
+import json
 from bs4 import BeautifulSoup
 from delorean import Delorean
 
-EMAIL = ''  # Tumblr email here
-PASSWORD = ''  # Tumblr password here
-BLOG = 'flight-of-the-felix.tumblr.com' # your blog url in the format of '<blog_name>.tumblr.com'
+from pprint import pprint
+import time
 
-
-class ValidationError(Exception):
-    def __init__(self, msg=None):
-        self.msg = msg
-
-    def __str__(self):
-        if self.msg is not None:
-            return u'{0}: {1}'.format(self.__class__.__name__, self.msg)
-        else:
-            return self.__class__.__name__
-
-
-class UnknownParticipantError(Exception):
-    def __init__(self, msg=None):
-        self.msg = msg
-
-    def __str__(self):
-        if self.msg is not None:
-            return u'{0}: {1}'.format(self.__class__.__name__, self.msg)
-        else:
-            return self.__class__.__name__
+#custom classes
+from errors import ValidationError,UnknownParticipantError
+from conversation import Conversation
 
 
 class TumblrMessaging(object):
@@ -36,6 +18,7 @@ class TumblrMessaging(object):
     _internal_form_key = None
     _bootloader = None
     _conversation_partners = dict()  # uuid: conversation_id
+
 
     def __init__(self, email, password, blog):
         self._email = email
@@ -76,7 +59,9 @@ class TumblrMessaging(object):
             'message': 'https://www.tumblr.com/svc/conversations/messages',
             'participant_suggestions': 'https://www.tumblr.com/svc/conversations/participant_suggestions',
             'conversation_poll': 'https://www.tumblr.com/svc/conversations',
-            'poll': 'https://www.tumblr.com/services/poll'
+            'poll': 'https://www.tumblr.com/services/poll',
+            'conversations' : 'https://www.tumblr.com/svc/conversations?participant=leftistnaija.tumblr.com&_=1',
+            'conversations1' : 'https://www.tumblr.com/svc/conversations?participant=leftistnaija.tumblr.com&_=1481691647264',
         }
 
     def _login(self):
@@ -139,38 +124,57 @@ class TumblrMessaging(object):
         }, headers=self._headers['ajax'])
 
         r.raise_for_status()
-        json = r.json()
-        return json['response']['id']
+        returnedJson = r.json()
+        with open("sendMessageReceipt.json","w") as f:
+            f.write(json.dumps(returnedJson,indent=2))
+        return returnedJson['response']['id']
+
+    def get_people(self):
+        r = self._session.get(self._urls['conversation_poll'], headers=self._headers['ajax'],
+                                                            params={'participant':self._blog,
+                                                                    '_':1 })
+        print(int((time.time())*1000))
+        r.raise_for_status()
+        with open("conversationOutput2.json","w") as f:
+            f.write(json.dumps(r.json(),indent=2))
 
     def get_messages(self, conversation_id):
         r = self._session.get(self._urls['message'], headers=self._headers['ajax'],
                               params={'conversation_id': conversation_id, 'participant': self._blog})
 
         r.raise_for_status()
-        json = r.json()
-        return json['response']['messages']['data']
+        returnedJson = r.json()
+
+        #with open("sampleMessages.json","w") as f:
+        #    f.write(json.dumps(returnedJson,indent=2))
+        return returnedJson['response']
 
     def get_conversation_suggestions(self, limit=8):
         r = self._session.get(self._urls['participant_suggestions'], headers=self._headers['ajax'],
                               params={'limit': limit})
 
         r.raise_for_status()
-        json = r.json()
-        return json['response']
+        rjson = r.json()
+        #with open("conversationSuggestion.json","w") as f:
+        #    f.write(json.dumps(rjson,indent=2))
+        return rjson['response']
 
     def _get_conversation_ids(self):
         r = self._session.get(self._urls['conversation_poll'], headers=self._headers['ajax'],
                               params={'participant': self._blog})
 
         r.raise_for_status()
-        json = r.json()
+        rjson = r.json()
 
-        if '_links' in json['response']:
+        #with open("conversationIDs.json","w") as f:
+        #    f.write(json.dumps(rjson,indent=2))
+
+        if '_links' in rjson['response']:
             self._urls['conversation_poll'] = 'https://www.tumblr.com{0}'.format(
-                json['response']['_links']['next']['href']
+                rjson['response']['_links']['next']['href']
             )
-        if 'conversations' in json['response']:
-            for conversation in json['response']['conversations']:
+        if 'conversations' in rjson['response']:
+            for conversation in rjson['response']['conversations']:
                 # conversation_id = conversation['id']
                 self._conversation_partners[conversation['participants'][1]['uuid']] = conversation
 
@@ -179,8 +183,9 @@ class TumblrMessaging(object):
             'token': self._bootloader['Context']['userinfo']['polling_token']}, headers=self._headers['ajax'])
 
         r.raise_for_status()
-        json = r.json()
-        return json['response']
+        with open("pollResults.json","w") as f:
+            f.write(json.dumps(r.json(),indent=2))
+        #return r.json()['response']
 
     def is_unread(self, participant):
         if participant not in self._conversation_partners:
@@ -191,11 +196,27 @@ class TumblrMessaging(object):
 
 
 if __name__ == '__main__':
-    tm = TumblrMessaging(EMAIL, PASSWORD, BLOG)
-    print(tm.is_unread('supercat-in-disguise.tumblr.com'))
-    # cid = tm.send_message('supercat-in-disguise.tumblr.com', 'test from __main__')
-    # messages = tm.get_messages(cid)
-    # for message in messages:
-    #     print('From: {0}'.format(message['participant']))
-    #     print(message['message'])
-    #     print('')
+    userCredentials = None
+    with open("userinfo.jl") as f:
+        userCredentials = json.loads(f.read())
+    tm = TumblrMessaging(userCredentials["username"], userCredentials["password"], userCredentials['blog'])
+
+    cid = tm.send_message("thewritingduke.tumblr.com","Request for another conversation ID?")
+    if (cid is not None):
+        conversation = Conversation(tm.get_messages(cid))
+        log = open("output2.txt", "w")
+        print(conversation, file = log)
+
+    #tm._get_conversation_ids()
+    #print(tm._conversation_partners)
+    #print(tm.is_unread('scullywannabe.tumblr.com'))
+
+    #tm._get_conversation_ids()
+    #cid = tm.send_message('scullywannabe.tumblr.com', 'hiiiiiiiiiiiii')
+    #messages = tm.get_messages(cid)
+    '''
+    for message in messages:
+        print('From: {0}'.format(message['participant']))
+        print(message['message'])
+        print('')
+        '''
